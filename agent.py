@@ -1,6 +1,6 @@
 import json
 from openai import OpenAI
-from server import search_products_mock
+from server import search_products
 #Connect to Ollama (default port 1143)
 client = OpenAI(
     base_url="http://127.0.0.1:11435/v1",
@@ -11,7 +11,7 @@ tools = [
     {
         "type": "function",
         "function": {
-            "name": "search_products_mock",
+            "name": "search_products",
             "description": "Searches the web for the products based on brand and price constraints",
             "parameters": {
                 "type": "object",
@@ -28,11 +28,12 @@ tools = [
 ]
 #Ask the model a question
 user_prompt = "Show me running shoes in the range of INR 3000-6000. Show top deals from nike and adidas and other top brands as well."
+print(f"User prompt: {user_prompt}\n")
 
 response = client.chat.completions.create(
     model="qwen2.5:7b",
-    messages=[{"role": "user", "content": user_prompt}],
-    tools=tools,
+    messages=[{"role": "user", "content": user_prompt}],  # type: ignore[arg-type]
+    tools=tools, # type: ignore[arg-type]
     tool_choice="auto"
 )
 
@@ -42,16 +43,16 @@ tool_calls = response.choices[0].message.tool_calls
 
 if tool_calls:
     for tool_call in tool_calls:
-        if tool_call.function.name == "search_products_mock":
+        if tool_call.function.name == "search_products":
             args = json.loads(tool_call.function.arguments)
             print(f"Qwen decided to call tool with args: {args}")
 
-            raw_web_data = search_products_mock(
+            raw_web_data = search_products(
                 prompt=args.get("prompt"),
                 brands=args.get("brands"),
                 min_price=args.get("min_price"),
                 max_price=args.get("max_price")
             )
-            print(f"Raw web data: \n{raw_web_data}")
+            print(f"Final product data: \n{raw_web_data}")
 else:
     print(f"Response message: {response_message.content}")
