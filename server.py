@@ -1,12 +1,27 @@
+import asyncio
 import json
+import logging
+from contextlib import asynccontextmanager
 
 import requests
 from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
 
 from scrapers import get_scraper, all_scrapers
+from state import state
+from worker import start_background_worker
 
-mcp = FastMCP("ProductSearchServer")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("KasperiaServer")
+
+
+@asynccontextmanager
+async def app_lifespan(server: FastMCP):
+    asyncio.create_task(start_background_worker())
+    yield
+
+
+mcp = FastMCP("Kasperia Deal Agent", lifespan=app_lifespan)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36)"
@@ -15,9 +30,10 @@ HEADERS = {
 USD_TO_INR = 83
 
 
-def extract_product_data(url: str) -> dict | None:
+async def extract_product_data(query: str, domain: str) -> dict | None:
+    logger.info(f"Running generic fallback parser on {domain} for {query}")
     try:
-        response = requests.get(url, headers=HEADERS, timeout=5)
+        response = requests.get(domain, headers=HEADERS, timeout=5)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, "lxml")
 
@@ -68,62 +84,51 @@ def extract_product_data(url: str) -> dict | None:
 
 
 @mcp.tool()
-def search_products(prompt: str, brands: list[str] | None = None, min_price: float | None = None, max_price: float | None = None) -> str:
-    """Scrapes brand sites directly for product deals and extracts e-commerce metadata"""
-    compiled_products = []
-    seen = set()
+async def search_products(query: str, domain: str) -> str:
+    """Searches items on a specific store domain
+        Returns instant data via static scraper
+        real-time scraper generation in the background
+    """
+    domain_clean = domain.lower().strip()
+    cache_key = f"{domain_clean}:{query.lower().strip()}"
 
-    targets = [(b, get_scraper(b)) for b in (brands or [])]
-    if not any(s for _, s in targets):
-        targets = list(all_scrapers())
+    #Layer 1: Check system memory cache
+    if cache_key in state.cache:
+        logger.info(f"Using cached scraper from {cache_key}")
+        return {
+            "status": "success",
+            "source": "cache",
+            "data": state.cache[cache_key]
+        }
+    # Layer 2: Match Static Scraper
+    if domain_clean in state.scraper_registry:
+        logger.info(f"Found dedicated scraper for {domain_clean}")
+        scraper = state.scraper_registry[domain_clean]
 
-    for brand_name, scraper in targets:
-        if not scraper:
-            continue
         try:
-            raw = scraper.search(prompt)
+            raw_data = await scraper.scrape_products(query)
+            state.cache[cache_key] = raw_data
+            return {
+                "status": "success",
+                "source": "static_scraper",
+                "data": raw_data
+            }
         except Exception as e:
-            print(f"{brand_name} scraper failed: {e}")
-            continue
+            logger.error(f"Static scraper failed for {domain_clean}: {str(e)}")
+    #Layer 3: Miss, Dispatch Dynamic Agent Worker and Run Fallback Parser Concurrently
+    logger.info(f"No static scraper found for {domain_clean}. Dispatching background build task...")
+    #Instaneous, non-blocking push to the shared container
+    await state.queue.put({"domain": domain_clean, "query": query})
 
-        for p in raw:
-            url = p.get("url")
-            if not url or url in seen:
-                continue
-            seen.add(url)
+    #Instantly trigger the fallback parser to provide and immediate UI response
+    fallback_data = await extract_product_data(query, domain_clean)
 
-            price = p.get("price")
-            currency = p.get("currency", "USD")
-            price_inr = None
-            if price is not None:
-                if currency == "USD":
-                    price_inr = price * USD_TO_INR
-                elif currency == "INR":
-                    price_inr = price
-                else:
-                    price_inr = price * USD_TO_INR
-
-            if price_inr is not None:
-                if min_price is not None and price_inr < min_price:
-                    continue
-                if max_price is not None and price_inr > max_price:
-                    continue
-
-            price_factor = max(0.1, (6000 - (price_inr or 6000)) / 3000)
-            vfm = round(price_factor * 5, 1)
-
-            compiled_products.append({
-                "vendor": p.get("vendor", brand_name.title()),
-                "make": p.get("make", "Unknown"),
-                "price": round(price_inr) if price_inr else None,
-                "vfm": vfm,
-                "rating": None,
-                "reviews_count": None,
-                "url": url,
-            })
-
-    return json.dumps(compiled_products)
-
+    return {
+        "status": "success",
+        "source": "fallback_parser",
+        "message": f"Returning initial results. A custom parser for {domain_clean} is being generated by our agent in the background.",
+        "data": fallback_data
+    }
 
 if __name__ == "__main__":
     mcp.run()
