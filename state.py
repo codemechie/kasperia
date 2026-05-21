@@ -6,6 +6,6 @@ class AppState:
         self.scraper_registry: Dict[str, Any] = {}
         self.cache: Dict[str, Any] = {} #In-memory mock for Redis
         self.queue: asyncio.Queue = asyncio.Queue() #Background event engine
-        self.lock: asyncio.Lock
+        self.lock: asyncio.Lock = asyncio.Lock()
 #Global state container instance
 state = AppState()
