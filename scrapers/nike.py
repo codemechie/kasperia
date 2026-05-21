@@ -1,10 +1,9 @@
 import json
-import requests
+import httpx
+from urllib.parse import quote
 from bs4 import BeautifulSoup
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+from typing import List, Dict, Any
+from scrapers.base import BaseScraper
 
 
 def _resolve_url(pdp_url):
@@ -15,13 +14,27 @@ def _resolve_url(pdp_url):
     return ""
 
 
-class NikeScraper:
-    def search(self, query: str) -> list[dict]:
-        url = f"https://www.nike.com/w?q={requests.utils.quote(query)}"
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.content, "lxml")
+class NikeScraper(BaseScraper):
+    @property
+    def target_domain(self) -> str:
+        return "nike.com"
 
+    async def scrape_products(self, query: str) -> List[Dict[str, Any]]:
+        url = f"https://www.nike.com/w?q={quote(query)}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+
+        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+            try:
+                response = await client.get(url)
+                if response.status_code != 200:
+                    return []
+                soup = BeautifulSoup(response.text, "html.parser")
+            except Exception:
+                return []
+
+        # Phase A: __NEXT_DATA__ JSON
         products = {}
         next_data = soup.find("script", id="__NEXT_DATA__")
         if next_data and next_data.string:
@@ -38,10 +51,10 @@ class NikeScraper:
                         prices = p.get("prices", {})
                         pdp = _resolve_url(p.get("pdpUrl", ""))
                         full_url = f"https://www.nike.com{pdp}" if pdp and pdp.startswith("/") else pdp
+                        new_price = prices.get("currentPrice")
 
                         current = products.get(key)
                         existing_price = current["price"] if current else None
-                        new_price = prices.get("currentPrice")
                         if current and existing_price is not None and new_price is not None and existing_price <= new_price:
                             continue
 
@@ -57,14 +70,12 @@ class NikeScraper:
             except (KeyError, TypeError, json.JSONDecodeError):
                 pass
 
-        if not products:
-            return self._parse_html(soup)
+        if products:
+            return list(products.values())
 
-        return list(products.values())
-
-    def _parse_html(self, soup: BeautifulSoup) -> list[dict]:
+        # Phase B: CSS selector fallback
         seen = set()
-        products = []
+        fallback = []
         for card in soup.select("[class*=product-card]"):
             link = card.select_one("[class*=product-card__link-overlay]")
             img = card.select_one("[class*=product-card__hero-image]")
@@ -76,7 +87,7 @@ class NikeScraper:
                     name = alt
             if name and url not in seen:
                 seen.add(url or name)
-                products.append({
+                fallback.append({
                     "vendor": "Nike",
                     "make": name,
                     "price": None,
@@ -85,4 +96,5 @@ class NikeScraper:
                     "reviews_count": None,
                     "url": url,
                 })
-        return products
+
+        return fallback

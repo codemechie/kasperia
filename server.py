@@ -14,7 +14,6 @@ from worker import start_background_worker
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("KasperiaServer")
 
-
 @asynccontextmanager
 async def app_lifespan(server: FastMCP):
     worker_task = asyncio.create_task(start_background_worker(), name="background-worker")

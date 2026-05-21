@@ -1,27 +1,36 @@
 import json
-import re
-import requests
+import httpx
+from urllib.parse import quote
 from bs4 import BeautifulSoup
+from typing import List, Dict, Any
+from scrapers.base import BaseScraper
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
 
-class AdidasScraper:
-    def search(self, query: str) -> list[dict]:
-        url = f"https://www.adidas.com/us/search?q={requests.utils.quote(query)}"
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code != 200:
+class AdidasScraper(BaseScraper):
+    @property
+    def target_domain(self) -> str:
+        return "adidas.com"
+
+    async def scrape_products(self, query: str) -> List[Dict[str, Any]]:
+        url = f"https://www.adidas.com/us/search?q={quote(query)}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+
+        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+            try:
+                response = await client.get(url)
+                if response.status_code != 200:
+                    return []
+                soup = BeautifulSoup(response.text, "lxml")
+            except Exception:
+                return []
+
+        search_data = self._find_embedded_json(soup)
+        if not search_data:
             return []
 
-        soup = BeautifulSoup(resp.content, "lxml")
-
-        products = []
-        search_data = self._find_embedded_json(soup)
-        if search_data:
-            products = self._parse_products(search_data)
-
-        return products
+        return self._parse_products(search_data)
 
     def _find_embedded_json(self, soup: BeautifulSoup) -> dict | None:
         for script in soup.find_all("script"):
@@ -56,32 +65,27 @@ class AdidasScraper:
                 (raw.get("products") if isinstance(raw, dict) else None) or []
 
         for item in items:
-            if isinstance(item, dict):
-                product = None
-                if "item" in item:
-                    product = item["item"]
-                elif "product" in item:
-                    product = item["product"]
-                else:
-                    product = item
+            if not isinstance(item, dict):
+                continue
 
-                if not isinstance(product, dict):
-                    continue
+            product = item.get("item") or item.get("product") or item
+            if not isinstance(product, dict):
+                continue
 
-                name = product.get("name")
-                offers = product.get("offers", {}) if isinstance(product.get("offers"), dict) else {}
-                price = offers.get("price")
-                currency = offers.get("priceCurrency", "USD")
-                url = product.get("@id") or product.get("url")
+            name = product.get("name")
+            offers = product.get("offers", {}) if isinstance(product.get("offers"), dict) else {}
+            price = offers.get("price")
+            currency = offers.get("priceCurrency", "USD")
+            url = product.get("@id") or product.get("url")
 
-                products.append({
-                    "vendor": "Adidas",
-                    "make": name or "Unknown",
-                    "price": float(price) if price else None,
-                    "currency": currency,
-                    "rating": None,
-                    "reviews_count": None,
-                    "url": url,
-                })
+            products.append({
+                "vendor": "Adidas",
+                "make": name or "Unknown",
+                "price": float(price) if price else None,
+                "currency": currency,
+                "rating": None,
+                "reviews_count": None,
+                "url": url,
+            })
 
         return products
