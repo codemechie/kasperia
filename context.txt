@@ -8,109 +8,149 @@ Ollama (Qwen/Mistral) orchestrates via MCP tool server.
 
 ---
 
-ARCHITECTURAL OVERVIEW (Abstract Interface / Agent-Driven Scraping)
+ARCHITECTURAL OVERVIEW (Multi-Agent System)
 
-The project underwent a major re-architecting. The old approach (direct-scraping Nike/Adidas with
-ad-hoc sync functions) has been replaced with an abstract, agent-driven pipeline:
+Phase 1 — Abstract interface over direct scrapers with 3-layer server-side lookup.
+Phase 2 — Self-healing multi-agent loop: missing scrapers are generated on the fly
+by an LLM code-gen agent, validated in an isolated evaluator, and live-deployed.
 
-┌──────────────────────────────────────────────────────────────────┐
-│                        main.py                                  │
-│  Entrypoint — bootstraps FastMCP server with graceful lifecycle │
-│  (logging, KeyboardInterrupt, exception handling, finally).     │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ mcp.run()
-                           ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                       server.py                                 │
-│  FastMCP "Kasperia Deal Agent". Tools:                          │
-│    • search_products(query, domain) — 3-layer lookup:           │
-│        1. state.cache hit → instant return                      │
-│        2. state.scraper_registry hit → async scrape_products()  │
-│        3. Cache+registry miss → push to state.queue +           │
-│           run asynchronous fallback parser (JSON-LD / OG tags)   │
-│    • Background worker started automatically via FastMCP        │
-│      lifespan parameter (asynccontextmanager) on boot.         │
-│  Lifecycle hooks at module level (if __name__ == "__main__").   │
-└──────┬──────────────────────┬───────────────────────┬───────────┘
-       │                      │                       │
-       ▼                      ▼                       ▼
-┌──────────────┐    ┌─────────────────┐    ┌────────────────────┐
-│  state.py    │    │   worker.py     │    │  scrapers/         │
-│  AppState    │    │  Background     │    │  └ base.py         │
-│  Container   │    │  Async Worker   │    │     BaseScraper    │
-│              │    │                 │    │     (ABC)          │
-│ • registry   │    │ Listens on      │    │     ↑     ↑       │
-│ • cache      │◄───│ state.queue     │    │     │     │       │
-│ • queue      │    │ for missing     │    │  nike.py adidas.py│
-│ • lock       │    │ domain events   │    │  (not yet adapted)│
-└──────────────┘    └─────────────────┘    └────────────────────┘
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │  agent.py    │
-                    │ (Ollama)     │
-                    │              │
-                    │ Qwen calls   │
-                    │ search_...   │
-                    └──────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         main.py                                         │
+│  Entrypoint — bootstraps FastMCP server with graceful lifecycle        │
+│  (logging, KeyboardInterrupt, exception handling, finally).            │
+└─────────────────────────────┬───────────────────────────────────────────┘
+                              │ mcp.run()
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         server.py                                       │
+│  FastMCP "Kasperia Deal Agent". Tools:                                  │
+│    • search_products(query, domain) — 3-layer lookup:                   │
+│        1. state.cache hit → instant return                              │
+│        2. state.scraper_registry hit → async scrape_products()          │
+│        3. Cache+registry miss → push to state.queue +                   │
+│           run asynchronous fallback parser (JSON-LD / OG tags)          │
+│    • Background worker auto-started via FastMCP lifespan parameter      │
+│  Lifecycle hooks at module level (if __name__ == "__main__").           │
+└──────┬──────────────────────┬──────────────────────────┬────────────────┘
+       │                      │                          │
+       ▼                      ▼                          ▼
+┌──────────────┐    ┌─────────────────────┐    ┌──────────────────────┐
+│  state.py    │    │    worker.py        │    │  scrapers/           │
+│  AppState    │    │  ┌─────────────────┐│    │  ├ base.py (ABC)     │
+│  Container   │    │  │1. fetch DOM     ││    │  ├ evaluator.py      │
+│              │    │  │   sample from   ││    │  │  (isolated code   │
+│ • registry   │    │  │   target domain ││    │  │   compiler)       │
+│ • cache      │◄───│  │2. call Ollama   ││    │  ├ nike.py           │
+│ • queue      │    │  │   code-gen      ││    │  ├ adidas.py         │
+│ • lock       │    │  │   agent         ││    │  └ schema.py         │
+└──────────────┘    │  │3. evaluator     ││    └──────────────────────┘
+       │            │  │   validates     ││               │
+       │            │  │   & registers   ││     (generated scrapers
+       │            │  └─────────────────┘│      live-deployed here)
+       │            └─────────────────────┘
+       │                      │
+       │                      ▼
+       │             ┌──────────────────┐
+       │             │   agent.py       │
+       │             │  (Ollama Qwen)   │
+       │             │                  │
+       │             │  User-facing     │
+       │             │  orchestration   │
+       │             └──────────────────┘
+       │
+       └──────────────────────────────────────────────────┐
+                                                          ▼
+                                           ┌──────────────────────────┐
+                                           │  run_llm_codegen_agent   │
+                                           │  (Ollama Qwen, called    │
+                                           │   by worker.py —         │
+                                           │   2nd LLM in the system) │
+                                           └──────────────────────────┘
+
+TWO LLM ROLES:
+  • agent.py —  Orchestrator: user-facing Qwen that decides which store to query
+                via search_products tool call.
+  • worker.py — Code-Gen Agent: background Qwen that reverse-engineers a store's
+                DOM structure into a runnable Python scraper class.
 
 LAYERED DATA FLOW:
   User Prompt → Ollama (tool_choice="auto") → search_products(query, domain)
     → Layer 1: state.cache (instant return)
     → Layer 2: state.scraper_registry (async BaseScraper.scrape_products)
     → Layer 3: Queue agent build + fallback parser (JSON-LD / OG meta)
+               ↓
+          worker.py picks up the queue job:
+               ├── fetch_target_dom_sample() → structural HTML snippet
+               ├── run_llm_codegen_agent() → Ollama generates Scraper class
+               └── load_agent_scraper() → compiles, validates, live-deploys
+                    into state.scraper_registry for future Layer 2 hits
 
 ---
 
-NEW / REFACTORED FILES
+FILE MAP
 
-┌─────────────────────────────────────────────────────────────────────┐
-│ scrapers/base.py       ABSTRACT INTERFACE                          │
-│                         • BaseScraper(ABC)                          │
-│                         • target_domain: str property               │
-│                         • async scrape_products(query) -> List[dict]│
-├─────────────────────────────────────────────────────────────────────┤
-│ scrapers/schema.py     PYDANTIC SCHEMA                             │
-│                         • ProductDeal(BaseModel)                    │
-│                         • fields: title, price, currency,           │
-│                           product_url, image_url, store_name,       │
-│                           scraped_at                                │
-├─────────────────────────────────────────────────────────────────────┤
-│ state.py               STATE CONTAINER (mock for Redis)            │
-│                         • AppState:                                 │
-│                           - scraper_registry: Dict[str, Scraper]    │
-│                           - cache: Dict[str, Any]                   │
-│                           - queue: asyncio.Queue                    │
-│                           - lock: asyncio.Lock                      │
-├─────────────────────────────────────────────────────────────────────┤
-│ worker.py              BACKGROUND ASYNC WORKER                     │
-│                         • start_background_worker():                │
-│                           infinite loop consuming state.queue       │
-│                           placeholder for dynamic scraper agent     │
-├─────────────────────────────────────────────────────────────────────┤
-│ server.py              FAST MCP SERVER                             │
-│                         • FastMCP("Kasperia Deal Agent")            │
-│                         • Background worker auto-started via        │
-│                           FastMCP(lifespan=app_lifespan)            │
-│                         • async search_products(query, domain)      │
-│                         • 3-layer lookup + fallback parser          │
-│                         • extract_product_data() (sync)             │
-├─────────────────────────────────────────────────────────────────────┤
-│ main.py                GRACEFUL ENTRYPOINT                         │
-│                         • logging setup                             │
-│                         • try/except/finally lifecycle              │
-│                         • calls mcp.run()                           │
-├─────────────────────────────────────────────────────────────────────┤
-│ agent.py               OLLAMA CLIENT (stale — see bugs)            │
-│                         • OpenAI-compatible → Ollama :11435         │
-│                         • tool schema for search_products           │
-│                         • fallback _parse_tool_call regex parser    │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│ scrapers/base.py         ABSTRACT INTERFACE                            │
+│                           • BaseScraper(ABC)                            │
+│                           • target_domain: str property                 │
+│                           • async scrape_products(query) -> List[dict]  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ scrapers/schema.py       PYDANTIC SCHEMA                               │
+│                           • ProductDeal(BaseModel)                      │
+│                           • fields: title, price, currency,             │
+│                             product_url, image_url, store_name,         │
+│                             scraped_at                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ scrapers/evaluator.py    ISOLATED CODE EVALUATOR                       │
+│                           • load_agent_scraper(domain, code_str) -> bool│
+│                           • Dynamically compiles LLM-generated code     │
+│                             in a sandboxed module scope                 │
+│                           • Enforces Scraper class convention           │
+│                           • Instantiates & live-binds to                │
+│                             state.scraper_registry                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│ state.py                 STATE CONTAINER (mock for Redis)              │
+│                           • AppState:                                   │
+│                             - scraper_registry: Dict[str, Scraper]      │
+│                             - cache: Dict[str, Any]                     │
+│                             - queue: asyncio.Queue                      │
+│                             - lock: asyncio.Lock                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│ worker.py                BACKGROUND CODE-GEN WORKER                    │
+│                           • start_background_worker():                  │
+│                             infinite loop consuming state.queue         │
+│                             1. fetch_target_dom_sample() — HTTP GET     │
+│                                to store, extract ~5k chars of body text │
+│                             2. run_llm_codegen_agent() — calls Ollama   │
+│                                (AsyncOpenAI) to generate Scraper class  │
+│                             3. load_agent_scraper() — evaluator         │
+│                                compiles, validates, live-registers      │
+│                           • Proper finally block guarantees             │
+│                             state.queue.task_done() on all exit paths   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ server.py                FAST MCP SERVER                               │
+│                           • FastMCP("Kasperia Deal Agent")              │
+│                           • Background worker auto-started via          │
+│                             FastMCP(lifespan=app_lifespan)              │
+│                           • async search_products(query, domain)        │
+│                           • 3-layer lookup + fallback parser            │
+│                           • extract_product_data() uses httpx.AsyncClient│
+├─────────────────────────────────────────────────────────────────────────┤
+│ main.py                  GRACEFUL ENTRYPOINT                           │
+│                           • logging setup                               │
+│                           • try/except/finally lifecycle                │
+│                           • calls mcp.run()                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│ agent.py                 ORCHESTRATOR LLM CLIENT                       │
+│                           • OpenAI-compatible → Ollama :11435            │
+│                           • tool schema: search_products(query, domain) │
+│                           • fallback _parse_tool_call regex parser      │
+└─────────────────────────────────────────────────────────────────────────┘
 
 EXISTING CODE (not yet adapted to new architecture):
-  scrapers/nike.py    — NikeScraper with sync .search(), no BaseScraper inheritance
-  scrapers/adidas.py  — AdidasScraper with sync .search(), no BaseScraper inheritance
-  scrapers/__init__.py — SCRAPERS dict with instantiated old-interface objects
+  scrapers/nike.py      — NikeScraper with sync .search(), no BaseScraper inheritance
+  scrapers/adidas.py    — AdidasScraper with sync .search(), no BaseScraper inheritance
+  scrapers/__init__.py   — SCRAPERS dict with instantiated old-interface objects
 
 ---
 
@@ -123,14 +163,11 @@ BUGS / ISSUES
 │     │ Fixed: replaced with FastMCP(lifespan=app_lifespan) using @asynccontextmanager.        │            │          │
 │     │ Background worker now auto-starts on server boot.                                      │            │          │
 ├─────┼────────────────────────────────────────────────────────────────────────────────────────┼────────────┼──────────┤
-│ B2  │ state.py:9 — self.lock is declared as type annotation but NEVER INITIALIZED:            │ CRITICAL   │ OPEN     │
-│     │   self.lock: asyncio.Lock   ← no assignment                                           │            │          │
-│     │ Any code accessing state.lock will raise AttributeError.                               │            │          │
+│ B2  │ state.py:9 — self.lock was declared as type annotation but never initialized.           │ CRITICAL   │ FIXED ✔  │
+│     │ Fixed: self.lock = asyncio.Lock() added.                                               │            │          │
 ├─────┼────────────────────────────────────────────────────────────────────────────────────────┼────────────┼──────────┤
-│ B3  │ agent.py ↔ server.py — FUNCTION SIGNATURE MISMATCH.                                   │ CRITICAL   │ OPEN     │
-│     │ agent.py calls: search_products(prompt=..., brands=..., min_price=..., max_price=...)  │            │          │
-│     │ server.py defines: search_products(query: str, domain: str) -> str                    │            │          │
-│     │ Completely incompatible interfaces.                                                    │            │          │
+│ B3  │ agent.py ↔ server.py — FUNCTION SIGNATURE MISMATCH.                                   │ CRITICAL   │ FIXED ✔  │
+│     │ Fixed: tool schema now matches server (query + domain), call site updated.             │            │          │
 ├─────┼────────────────────────────────────────────────────────────────────────────────────────┼────────────┼──────────┤
 │ B4  │ server.py — VARIABLE NAME BUG: used raw `domain` instead of sanitized `domain_clean`.  │ HIGH       │ FIXED ✔  │
 │     │ Fixed: domain → domain_clean on the registry lookup.                                   │            │          │
@@ -139,8 +176,9 @@ BUGS / ISSUES
 │     │ They use sync .search(query) instead of async .scrape_products(query).                 │            │          │
 │     │ They lack target_domain property. Not compatible with the new architecture.            │            │          │
 ├─────┼────────────────────────────────────────────────────────────────────────────────────────┼────────────┼──────────┤
-│ B6  │ worker.py — PLACEHOLDER ONLY. Sleeps 5s, logs "success", but never builds scrapers.    │ HIGH       │ OPEN     │
-│     │ scraper_registry stays empty forever.                                                  │            │          │
+│ B6  │ worker.py — Was a placeholder that only slept and logged.                              │ HIGH       │ FIXED ✔  │
+│     │ Fixed: Now fetches real DOM samples, calls Ollama code-gen agent, and registers         │            │          │
+│     │ validated scrapers via load_agent_scraper() into state.scraper_registry.                │            │          │
 ├─────┼────────────────────────────────────────────────────────────────────────────────────────┼────────────┼──────────┤
 │ B7  │ scrapers/__init__.py — OLD INTERFACE. Pre-instantiated sync scrapers, not consumed     │ MEDIUM     │ OPEN     │
 │     │ anywhere in the new architecture (server.py uses state.scraper_registry instead).      │            │          │
@@ -162,10 +200,6 @@ BUGS / ISSUES
 └─────┴────────────────────────────────────────────────────────────────────────────────────────┴────────────┴──────────┘
 
 NEXT STEPS:
-  1. Fix B2: initialize self.lock = asyncio.Lock() in AppState.__init__
-  2. Fix B3: reconcile agent.py's tool definition + call signature with server.py's actual signature
-  3. Adapt NikeScraper + AdidasScraper to inherit from BaseScraper (async scrape_products + target_domain)
-  4. Implement actual scraper generation in worker.py (not just sleep + log)
-  5. Add pydantic + openai to requirements.txt
-  6. Wire up __init__.py to register adapters into state.scraper_registry at boot
-  7. Review unused USD_TO_INR constant
+  1. Adapt NikeScraper + AdidasScraper to inherit from BaseScraper (async scrape_products + target_domain)
+  2. Wire up __init__.py to register adapters into state.scraper_registry at boot
+  3. Review unused USD_TO_INR constant
