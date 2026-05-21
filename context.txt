@@ -117,16 +117,19 @@ FILE MAP
 │                             - lock: asyncio.Lock                        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ worker.py                BACKGROUND CODE-GEN WORKER                    │
+│                           • fetch_target_dom_sample():                  │
+│                             - SSRF-safe: domain validated via regex     │
+│                               reject scheme/path/port/local addresses   │
+│                             - Query injection safe: urllib.parse.quote  │
+│                             - Strips script/style/noscript/svg          │
+│                             - Returns real HTML markup (not plain text) │
+│                               so LLM sees tags, classes, IDs            │
+│                             - Non-2xx/exceptions → empty string         │
 │                           • start_background_worker():                  │
-│                             infinite loop consuming state.queue         │
-│                             1. fetch_target_dom_sample() — HTTP GET     │
-│                                to store, extract ~5k chars of body text │
-│                             2. run_llm_codegen_agent() — calls Ollama   │
-│                                (AsyncOpenAI) to generate Scraper class  │
-│                             3. load_agent_scraper() — evaluator         │
-│                                compiles, validates, live-registers      │
-│                           • Proper finally block guarantees             │
-│                             state.queue.task_done() on all exit paths   │
+│                             1. fetch_target_dom_sample()                │
+│                             2. run_llm_codegen_agent() — Ollama code-gen│
+│                             3. load_agent_scraper() — validate + deploy│
+│                           • finally block guarantees task_done()        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ server.py                FAST MCP SERVER                               │
 │                           • FastMCP("Kasperia Deal Agent")              │
@@ -199,7 +202,8 @@ BUGS / ISSUES
 │     │ "pending":true} when extract_product_data returns None (no data found).                 │            │          │
 └─────┴────────────────────────────────────────────────────────────────────────────────────────┴────────────┴──────────┘
 
-NEXT STEPS:
-  1. Adapt NikeScraper + AdidasScraper to inherit from BaseScraper (async scrape_products + target_domain)
-  2. Wire up __init__.py to register adapters into state.scraper_registry at boot
-  3. Review unused USD_TO_INR constant
+PHASE 3 (next):
+  • Adapt NikeScraper + AdidasScraper to inherit from BaseScraper
+  • Wire up __init__.py to register adapters into state.scraper_registry
+  • Review unused USD_TO_INR constant
+  • Use the README prompt to update GitHub repo

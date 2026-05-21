@@ -3,9 +3,16 @@ import logging
 import httpx
 from bs4 import BeautifulSoup
 from openai import AsyncOpenAI
+import re
+from urllib.parse import quote
 
 from state import state
 from scrapers.evaluator import load_agent_scraper
+
+#a strict allowlist or hostname regex to reject
+#values containing schemes, paths, ports or dangerous characters to prevent SSRF:
+_DOMAIN_RE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$", re.IGNORECASE)
+
 
 # Basic background engine logger
 logging.basicConfig(level=logging.INFO)
@@ -18,19 +25,26 @@ llm_client = AsyncOpenAI(
 
 async def fetch_target_dom_sample(domain: str, query:str) -> str:
     """Fetches a lightweight snippet of the store's result grid to show to the LLM"""
-    url = f"https://{domain}/search?q={query}"
+    if not _DOMAIN_RE.match(domain or ""):
+        logger.error(f"Rejecting unsafe domain: {domain!r}")
+        return "<!-- invalid domain -->"
+    url = f"https://{domain}/search?q={quote(query or '', safe='')}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(url, headers=headers)
-            if response.status_code == 200:
-                # Truncate the DOM to just structural markers so we dont blow past LLM token limit
+            if response.is_success:
+                # Truncate the DOM to just structural markers so we don't blow past LLM token limit
                 soup = BeautifulSoup(response.content, "html.parser")
-                return soup.body.get_text()[:5000] if soup.body else response.text[:5000]
+                for tag in soup(["script", "style", "noscript", "svg"]):
+                    tag.decompose()
+                body = soup.body or soup
+                return str(body)[:5000]
+            logger.warning(f"DOM fetch for {domain} returned HTTP {response.status_code}")
     except Exception as e:
         logger.error(f"Could not retrieve sample DOM markup for {domain}: {str(e)}")
-    return "<!-- Standard e-commerce listing markup placeholder -->"
+    return ""
 
 async def start_background_worker():
     """Listens continuously for missing scrapers and queues agent builds."""
