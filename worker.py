@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import httpx
 from bs4 import BeautifulSoup
 from openai import AsyncOpenAI
@@ -68,6 +69,14 @@ async def start_background_worker():
             success = load_agent_scraper(domain, generated_python_code)
             if success:
                 logger.info(f"System upgraded! Real-time scraper active for: {domain}")
+                safe_name = domain.replace(".", "_")
+                file_path = f"scrapers/generated/{safe_name}.py"
+                try:
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(generated_python_code)
+                    logger.info(f"Persisted scraper to {file_path}")
+                except OSError as e:
+                    logger.error(f"Failed to write {file_path}: {e}")
             else:
                 logger.warning(f"Real-time build loop failed validation for {domain}")
 
