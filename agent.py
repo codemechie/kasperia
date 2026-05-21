@@ -8,22 +8,19 @@ client = OpenAI(
     base_url="http://127.0.0.1:11435/v1",
     api_key="ollama"
 )
-#1. Define the tool schema so Mistral knows it exists
 tools = [
     {
         "type": "function",
         "function": {
             "name": "search_products",
-            "description": "Searches the web for products and extracts e-commerce metadata (prices, ratings, VFM scores)",
+            "description": "Searches a specific e-commerce store for products and extracts metadata (prices, ratings)",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "The product to search for (e.g. 'running shoes under 6000')"},
-                    "brands": {"type": "array", "items": {"type": "string"}, "description": "Optional brand names to include in search"},
-                    "min_price": {"type": "number", "description": "Minimum price filter (optional)"},
-                    "max_price": {"type": "number", "description": "Maximum price filter (optional)"}
+                    "query": {"type": "string", "description": "Product to search for (e.g. 'running shoes')"},
+                    "domain": {"type": "string", "description": "Store domain to search (e.g. 'nike.com', 'amazon.com')"}
                 },
-                "required": ["prompt"]
+                "required": ["query", "domain"]
             }
         }
     }
@@ -62,10 +59,8 @@ if args:
     print(f"Qwen decided to call tool with args: {args}")
 
     raw_web_data = search_products(
-        prompt=args.get("prompt"),
-        brands=args.get("brands"),
-        min_price=args.get("min_price"),
-        max_price=args.get("max_price"),
+        query=args.get("query"),
+        domain=args.get("domain"),
     )
     print(f"Final product data: \n{raw_web_data}")
 else:
