@@ -1,289 +1,285 @@
-# Kasperia 🛍️
+# Kasperia
 
-> An intelligent AI agent that searches e-commerce websites in real time to find you the best deals across multiple vendors—all powered by local LLMs and zero external APIs.
+> An AI-powered agent that searches e-commerce websites for the best deals in real-time.
 
-[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-[![FastMCP](https://img.shields.io/badge/FastMCP-Server-green.svg)](https://github.com/jlouis/fastmcp)
-[![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-orange.svg)](https://ollama.ai)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python Version](https://img.shields.io/badge/Python-3.12%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![FastMCP](https://img.shields.io/badge/FastMCP-Server-00a8e8)](https://github.com/jlowell/fastmcp)
+[![Ollama](https://img.shields.io/badge/Ollama-Qwen%202.5-FF6B35)](https://ollama.ai)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+## 🎯 What is Kasperia?
+
+Kasperia is an autonomous AI agent that discovers and aggregates product deals across e-commerce platforms. Instead of manually hunting through websites, you describe what you're looking for in natural language, and Kasperia:
+
+1. **Understands** your intent via an orchestrator LLM
+2. **Searches** the most relevant e-commerce sites
+3. **Generates custom scrapers on-the-fly** for unsupported stores
+4. **Self-heals** when scrapers fail, automatically fixing errors up to 3 times
+5. **Returns** the best deals with zero external API keys
+
+## 🚀 Key Features
+
+### ⚡ Instant Fallback + Non-Blocking Build
+Even for unsupported stores, a generic meta-tag parser returns results **immediately** while a dedicated scraper builds in the background. On your next query, Kasperia uses the newly generated scraper for faster, more accurate results.
+
+### 🧠 Self-Healing Scrapers
+Generated code fails? No problem. The debugging agent automatically analyzes the error trace and patches syntax/import issues—retrying up to 3 times before giving up. Dead simple, bulletproof.
+
+### 🏗️ Dual-Agent Architecture (Three Roles)
+- **Orchestrator** — User-facing LLM that parses natural language queries and routes them to the right store
+- **Code-Gen Agent** — Reverse-engineers a store's DOM into a working Python scraper class
+- **Debugging Agent** — Receives broken code + traceback, patches errors, and retries
+
+Clean separation of concerns. Zero coupling.
+
+### 🔒 Isolated Code Execution
+LLM-generated Python runs in a sandboxed module scope. Corrupted code can't poison core system memory. The evaluator returns structured error dicts for precise failure feedback.
+
+### 🌐 Zero External APIs
+- No Selenium/Playwright overhead
+- No paid search API subscriptions
+- Pure HTTP + BeautifulSoup + local Ollama
+- Lightweight, fast, and fully offline-capable
+
+### 💾 Persistent Scraper Cache
+Generated scrapers live on disk in `scrapers/generated/` and survive app restarts. Your first query builds the scraper; subsequent queries are blazingly fast.
 
 ---
 
-## 🚀 What is Kasperia?
-
-Kasperia is a **self-healing e-commerce search agent** that:
-
-- 🤖 **Understands natural language** queries to determine which stores to search
-- 🔍 **Auto-generates store-specific scrapers** on demand using LLM code generation
-- ⚡ **Returns instant results** via fallback parsing while learning new sites
-- 🔒 **Runs locally** with Ollama (Qwen 2.5)—no cloud APIs, no API keys
-- 🛡️ **Isolates generated code** in sandboxed execution environments for safety
-
-Ask Kasperia: *"Find me running shoes under $100 on Nike and Amazon"*, and it will:
-1. Route your query to the relevant stores
-2. Fetch current product data (generating custom scrapers if needed)
-3. Return ranked deals with real prices and links
-
----
-
-## 🏗️ Architecture Overview
-
-### Three-Layer Lookup Pipeline
+## 🏗️ Architecture
 
 ```
-User Query
-    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Layer 1: Cache (instant hit)                        │
-│ ✓ In-memory registry of known scrapers              │
-│ → Returns cached results immediately                │
-└─────────────────────────────────────────────────────┘
-    ↓ (miss)
-┌─────────────────────────────────────────────────────┐
-│ Layer 2: Static Scraper (registered handler)        │
-│ ✓ Deployed BaseScraper subclass for domain          │
-│ → Executes known scraper, returns results           │
-└─────────────────────────────────────────────────────┘
-    ↓ (miss)
-┌─────────────────────────────────────────────────────┐
-│ Layer 3: Fallback + Background Build                │
-│ ✓ Generic JSON-LD/OG meta parser                    │
-│ → Returns initial results immediately               │
-│ ↓ (async)                                           │
-│ Worker generates site-specific scraper via LLM      │
-│ Validates & deploys to Layer 2 for future queries   │
-└─────────────────────────────────────────────────────┘
+│  User Query (Natural Language)                      │
+└─────────────────┬───────────────────────────────────┘
+                  │
+                  ▼
+        ┌─────────────────────┐
+        │  Orchestrator Agent │ (agent.py)
+        │  Calls: search_products(query, domain)
+        └─────────┬───────────┘
+                  │
+      ┌───────────┴───────────┐
+      │                       │
+      ▼                       ▼
+ Layer 1: Cache          Layer 2: Static
+ (in-memory dict)        Scraper Registry
+      │                       │
+      └──────┬────────────┬───┘
+             │            │
+         Hit │            │ Hit
+             │            │
+      ┌──────▼┐      ┌────▼──────┐
+      │Return │      │  Return   │
+      │Results│      │  Results  │
+      └───────┘      └───────────┘
+                          │
+                          │ Miss
+                          ▼
+                     Layer 3: Fallback
+                     + Background Build
+                     ├─ Generic meta-tag parser
+                     │  (JSON-LD, OG tags)
+                     └─ Queue worker for
+                        custom scraper generation
+                             │
+                             ▼
+                     ┌──────────────────┐
+                     │  Worker Process  │
+                     ├──────────────────┤
+                     │ 1. DOM Fetch     │
+                     │ 2. Code-Gen      │
+                     │ 3. Validation    │
+                     │ 4. Self-Healing  │
+                     │ 5. Deploy        │
+                     └──────────────────┘
 ```
 
-### Dual-Agent System
+### Three-Layer Server Lookup
 
-| Component | Role | Responsibility |
-|-----------|------|-----------------|
-| **Orchestrator** (`agent.py`) | User-facing LLM | Analyzes queries, routes to appropriate stores, invokes `search_products()` |
-| **Code-Gen Worker** (`worker.py`) | Background LLM | Reverse-engineers store DOM → generates Python scraper class |
+| Layer | Mechanism | Speed | Accuracy |
+|-------|-----------|-------|----------|
+| **1 — Cache** | In-memory dict lookup | Instant | Perfect (cached result) |
+| **2 — Static Scraper** | Registered `BaseScraper` subclass | Fast | High (hand-tuned) |
+| **3 — Fallback + Build** | Generic meta-tag parser + background code-gen | Immediate | Medium (initial) → High (after build) |
 
-### Worker Pipeline (Self-Healing)
+### Self-Healing Worker Pipeline
 
-```
-1. fetch_target_dom_sample()
-   └─ Lightweight HTTP GET, extract ~5k chars
-
-2. run_llm_codegen_agent()
-   └─ Send DOM to Ollama, receive Python Scraper class
-
-3. load_agent_scraper()
-   └─ Compile in isolated module scope
-   └─ Validate Scraper class exists
-   └─ Instantiate & bind to state.scraper_registry
-
-4. Future queries use Layer 2 (instant execution)
+```python
+fetch_target_dom_sample()
+    ↓ (lightweight HTTP, tries 5 search patterns + homepage fallback)
+run_llm_codegen_agent()
+    ↓ (Ollama generates Python Scraper class)
+Self-Healing Loop (max 3 attempts):
+    ├─ load_agent_scraper() → Sandbox compile & validate
+    ├─ Valid? → Write to scrapers/generated/, success ✓
+    └─ Invalid? → Dump to debug_dump/, call run_llm_debugging_agent(), retry
+    ↓ (all attempts exhausted or successful)
+state.queue.task_done() → Job marked complete
 ```
 
 ---
 
-## ⚡ Key Features
-
-### Self-Healing Scrapers
-When an e-commerce site isn't yet supported, Kasperia automatically generates a custom scraper via LLM code generation—no manual configuration required.
-
-### Instant Fallback
-Even while a dedicated scraper is being built in the background, users get immediate results from generic metadata parsing (JSON-LD, Open Graph).
-
-### Isolated Code Execution
-LLM-generated Python code runs in a sandboxed module scope, preventing corrupted or malicious code from affecting the core system.
-
-### Zero External Dependencies
-- ✓ No cloud APIs
-- ✓ No subscription costs
-- ✓ No API keys
-- ✓ Pure HTTP + BeautifulSoup + local Ollama
-
-### Clean Separation of Concerns
-One LLM handles user intent and routing; another specializes in code generation. Each focuses on what it does best.
-
----
-
-## 📁 Project Structure
+## 📂 Project Structure
 
 ```
 kasperia/
-├── main.py                  # Entrypoint, graceful lifecycle & lifespan hooks
-├── server.py                # FastMCP server, search_products tool, fallback parser
-├── agent.py                 # Orchestrator LLM client (user-facing)
-├── worker.py                # Background worker (DOM fetch → code-gen → validate → deploy)
-���── state.py                 # In-memory AppState (scraper_registry, cache, queue, locks)
-├── scrapers/
-│   ├── base.py              # BaseScraper abstract base class
-│   ├── evaluator.py         # Isolated code compiler & validator (sandboxed execution)
-│   ├── schema.py            # Pydantic ProductDeal model
-│   ├── nike.py              # Nike scraper (legacy)
-│   ├── adidas.py            # Adidas scraper (legacy)
-│   └── __init__.py          # Legacy SCRAPERS registry
-└── README.md                # This file
+├── main.py                    # Entrypoint, graceful lifecycle management
+├── server.py                  # FastMCP server + search_products tool
+├── agent.py                   # Orchestrator LLM client (input validation)
+├── worker.py                  # Background worker: fetch → codegen → heal → deploy
+├── state.py                   # In-memory AppState container (registry, cache, queue)
+├── test_query.py              # End-to-end pipeline verification
+│
+└── scrapers/
+    ├── base.py                # BaseScraper abstract base class
+    ├── evaluator.py           # Isolated code compiler/validator
+    ├── schema.py              # Pydantic ProductDeal model
+    ├── nike.py                # Nike scraper (static, hand-tuned)
+    ├── adidas.py              # Adidas scraper (static, hand-tuned)
+    ├── __init__.py            # Registry bootstrap + auto-scan generated/
+    ├── generated/             # Persisted LLM-generated scrapers (survives restarts)
+    └── debug_dump/            # Faulty code staging (auto-cleaned on success)
 ```
 
 ---
 
-## 🔧 Getting Started
+## 🚀 Quick Start
 
 ### Prerequisites
-
-- **Python 3.12+**
-- **Ollama** running locally with Qwen 2.5 model
-  ```bash
-  ollama pull qwen:2.5
-  ollama serve
-  ```
+- Python 3.12+
+- [Ollama](https://ollama.ai) with Qwen 2.5 model running locally
+- `pip` (or your preferred package manager)
 
 ### Installation
 
 ```bash
+# Clone the repository
 git clone https://github.com/codemechie/kasperia.git
 cd kasperia
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Ensure Ollama is running
+ollama serve
 ```
 
-### Running Kasperia
+### Usage
 
 ```bash
+# Run the FastMCP server (starts worker background thread automatically)
 python main.py
+
+# In another terminal, run the end-to-end test
+python test_query.py
 ```
 
-The FastMCP server starts on a local port (default: see logs). The background worker thread initializes automatically via the lifespan hook.
+The test will:
+1. Trigger a Layer 3 miss (no static scraper for the target domain)
+2. Wait for the background worker to generate a custom scraper
+3. Retry the query to verify the Layer 2 cache hit
 
-### Example Query
+---
+
+## 🔧 How It Works
+
+### 1️⃣ User Query → Orchestrator Agent
+You ask: *"Show me Nike shoes under $100 with good reviews"*
+
+The orchestrator parses your intent, determines the relevant store(s), and calls the `search_products(query, domain)` tool.
+
+### 2️⃣ Three-Layer Lookup
+- **Layer 1 (Cache)**: Is this store already in memory? Return instantly.
+- **Layer 2 (Static Registry)**: Is there a hand-tuned scraper for this store? Use it.
+- **Layer 3 (Fallback)**: Neither? Parse generic meta tags and queue a background build.
+
+### 3️⃣ Background Worker (if needed)
+```
+Fetch DOM → LLM CodeGen → Compile & Validate → Self-Heal (if errors) → Deploy
+```
+
+The worker:
+- Fetches a sample of the target store's DOM (2k chars, cleaned HTML)
+- Feeds it to Ollama (Qwen 2.5) to generate a `Scraper` class
+- Compiles the code in an isolated sandbox
+- If validation fails, calls the debugging agent to fix errors (retry up to 3 times)
+- Writes the final scraper to `scrapers/generated/` on success
+
+### 4️⃣ Next Query (Same Store)
+Layer 2 cache hit. Results returned instantly using the generated scraper.
+
+---
+
+## 🛡️ Resilience & Error Handling
+
+- **Non-fatal write failures**: OSErrors saving to disk don't abort the build loop
+- **Sandbox isolation**: Corrupted LLM code can't crash the main process
+- **Structured error feedback**: The evaluator returns `{"success": bool, "error": "..."}` dicts
+- **Automatic retries**: Up to 3 self-healing attempts before graceful fallback
+- **Clean shutdown**: `finally` blocks in the worker ensure `task_done()` is always called
+
+---
+
+## 📊 State Management
+
+All application state lives in a single `AppState` container (`state.py`):
 
 ```python
-# Via MCP client or HTTP POST to the server:
-{
-  "tool": "search_products",
-  "input": {
-    "query": "waterproof hiking boots",
-    "domain": "amazon.com"
-  }
-}
-```
-
-Response:
-```json
-{
-  "results": [
-    {
-      "product_name": "Merrell Moab 2 Waterproof",
-      "price": "$89.99",
-      "url": "https://amazon.com/...",
-      "store": "amazon.com"
-    },
-    ...
-  ]
-}
+@dataclass
+class AppState:
+    scraper_registry: dict[str, BaseScraper]    # Cached scraper instances
+    cache: dict[str, list[ProductDeal]]         # Search result cache
+    queue: asyncio.Queue                         # Background job queue
+    lock: asyncio.Lock                          # Thread-safe mutations
 ```
 
 ---
 
-## 📊 How It Works (Flow Diagram)
+## 🧪 Testing
 
-```
-┌──────────────────┐
-│   User Query     │
-│ (Natural Lang)   │
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────────────────────┐
-│  Orchestrator Agent (Qwen)       │
-│  • Parse intent                  │
-│  • Identify store(s)             │
-│  • Call search_products()        │
-└────────┬─────────────────────────┘
-         │
-         ▼
-┌──────────────────────────────────┐
-│  Server Layer Lookup             │
-├──────────────────────────────────┤
-│  L1: Cache Hit? → Return          │
-���  L2: Static Scraper? → Execute    │
-│  L3: Fallback + Queue Build       │
-└────────┬─────────────────────────┘
-         │
-         ├─────────────────┬────────────────────┐
-         │                 │                    │
-    ┌────▼───┐      ┌─────▼──────┐      ┌──────▼──────┐
-    │ Results│      │  Async Job │      │   Future    │
-    │ (Fast) │      │  in Queue  │      │  Layer-2    │
-    │        │      │            │      │  Registry   │
-    └────┬───┘      └─────┬──────┘      └─────────────┘
-         │                │
-         │                ▼
-         │          ┌────────────────────────┐
-         │          │  Code-Gen Worker       │
-         │          │ (Background Qwen)      │
-         │          ├────────────────────────┤
-         │          │ 1. Fetch DOM sample    │
-         │          │ 2. LLM → Python class  │
-         │          │ 3. Validate & Sandbox  │
-         │          │ 4. Deploy to Layer 2   │
-         │          └────────────────────────┘
-         │
-         └──────────────────┬───────────────────┘
-                            │
-                            ▼
-                    ┌──────────────┐
-                    │ Best Deals ✓ │
-                    └──────────────┘
+```bash
+python test_query.py
 ```
 
----
-
-## 🔐 Safety & Reliability
-
-- **Sandboxed Code Execution**: LLM-generated scrapers run in isolated module scopes, preventing system corruption
-- **Validation Layer**: All generated code is parsed, inspected, and validated before execution
-- **Graceful Fallbacks**: If scraper generation fails, users still get results from generic metadata parsing
-- **Async Worker Queue**: Background tasks don't block user responses
-
----
-
-## 📝 State Management
-
-Kasperia uses an in-memory `AppState` container (`state.py`) to manage:
-
-- `scraper_registry`: Active, validated scraper classes
-- `cache`: Query results cache
-- `queue`: Async job queue for scraper generation
-- `locks`: Thread-safe access patterns
+End-to-end verification:
+- Triggers a Layer 3 miss for a new store
+- Waits for the background build to complete
+- Verifies the Layer 2 cache hit on retry
+- Graceful exception handling and cleanup
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Areas for enhancement:
+Contributions are welcome! To add a new static scraper:
 
-- Additional static scrapers for popular stores
-- Improved DOM parsing strategies
-- LLM prompt engineering for better code generation
-- Caching strategies (Redis, SQLite)
-- Web UI for query submission
+1. Create a new file in `scrapers/` (e.g., `amazon.py`)
+2. Subclass `BaseScraper` and implement `search(query: str) -> list[ProductDeal]`
+3. Register it in `scrapers/__init__.py`
+4. Add tests to `test_query.py`
 
----
-
-## 📄 License
-
-MIT License — See [LICENSE](LICENSE) for details.
+For bug reports or feature requests, open an issue on GitHub.
 
 ---
 
-## 🎯 Roadmap
+## 📝 License
 
-- [ ] Multi-model support (expand beyond Qwen 2.5)
-- [ ] Persistent scraper storage
-- [ ] Price history tracking & deal alerts
-- [ ] Web dashboard
-- [ ] Docker containerization
-- [ ] Advanced filtering (brand, rating, shipping cost)
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-## 💬 Questions?
+## 💡 Why Kasperia?
 
-Feel free to open an issue or reach out to the maintainers. Happy deal hunting! 🎁
+In a world of fragmented e-commerce platforms, hunting for deals is tedious. Kasperia automates it with:
+
+- **Zero external dependencies**: No API keys, no rate limits, no vendor lock-in
+- **Instant results**: Even for unsupported stores, you get results immediately
+- **Self-improving**: Each new store generates a persistent, reusable scraper
+- **Bulletproof recovery**: Broken scrapers fix themselves
+
+Query once. Kasperia learns. Query again. Kasperia is faster.
+
+---
+
+**Built with ❤️ using Python, FastMCP, Ollama, and a sprinkle of AI magic.**
