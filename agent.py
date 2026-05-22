@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 
@@ -58,10 +59,10 @@ if args is None and response_message.content:
 if args:
     print(f"Qwen decided to call tool with args: {args}")
 
-    raw_web_data = search_products(
+    raw_web_data = asyncio.run(search_products(
         query=args.get("query"),
         domain=args.get("domain"),
-    )
+    ))
     print(f"Final product data: \n{raw_web_data}")
 else:
     print(f"Response message: {response_message.content}")
