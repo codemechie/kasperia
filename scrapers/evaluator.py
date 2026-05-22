@@ -1,5 +1,7 @@
+import inspect
 import types
 import logging
+import traceback
 from state import state
 
 logger = logging.getLogger("ScraperEvaluator")
@@ -32,11 +34,19 @@ def load_agent_scraper(domain: str, python_code_str: str) -> dict:
         scraper_class = dynamic_module.__dict__["Scraper"]
 
         # 6. Instantiate and live-bind right to your global state container
-        state.scraper_registry[domain] = scraper_class()
+        scraper = scraper_class()
+        scrape_products = getattr(scraper, "scraper_products", None)
+        if not inspect.iscoroutinefunction(scrape_products):
+            return {
+                "success": False,
+                "error": "Scraper.scrape_products must be defined as an async method."
+            }
+        state.scraper_registry[domain] = scraper
         logger.info(f"Live-registered dynamic parser into state.scraper_registry: {domain}")
         return {"success": True}
 
     except Exception as e:
-        logger.error(f"Validation failed: {e}")
-        return {"success": False, "error": str(e)}
+        error = traceback.format_exc()
+        logger.error("Validation failed:\n%s", error)
+        return {"success": False, "error": error}
 

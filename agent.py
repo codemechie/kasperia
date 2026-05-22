@@ -59,10 +59,13 @@ if args is None and response_message.content:
 if args:
     print(f"Qwen decided to call tool with args: {args}")
 
-    raw_web_data = asyncio.run(search_products(
-        query=args.get("query"),
-        domain=args.get("domain"),
-    ))
+    query = args.get("query")
+    domain = args.get("domain")
+
+    if not query or not domain:
+        print(f"Error: Missing required parameters. query={query}, domain={domain}")
+        exit(1)
+    raw_web_data = asyncio.run(search_products(query=query, domain=domain))
     print(f"Final product data: \n{raw_web_data}")
 else:
     print(f"Response message: {response_message.content}")

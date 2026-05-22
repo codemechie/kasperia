@@ -51,7 +51,7 @@ async def fetch_target_dom_sample(domain: str, query: str) -> str:
         return ""
 
     encoded_query = quote(query or "", safe="")
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         # Phase 1: try search URL patterns
         for pattern in _SEARCH_PATTERNS:
             url = f"https://{domain}{pattern.replace('{query}', encoded_query)}"
@@ -108,6 +108,8 @@ async def start_background_worker():
             safe_name = domain.replace(".", "_")
             file_path = f"scrapers/generated/{safe_name}.py"
             debug_dump_dest = f"scrapers/debug_dump/faulty_{safe_name}.py"
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            os.makedirs(os.path.dirname(debug_dump_dest), exist_ok=True)
 
             while current_attempt <= max_attempts:
                 logger.info(f"Running RAM Firewall Evaluation [{current_attempt}/{max_attempts}] for {domain}")
@@ -132,14 +134,20 @@ async def start_background_worker():
                         break
                     except OSError as e:
                         logger.error(f"Failed to write {file_path}: {e}")
+                        current_attempt += 1
+                        continue
 
                 else:
                     # --- ROUTE B: Evaluator detects fault ---
                     logger.warning(f"Real-time build loop failed validation for {domain}")
                     # Dump the faulty code to your hidden staging area so you can debug it later
-                    with open(debug_dump_dest, "w", encoding="utf-8") as f:
-                        f.write(generated_python_code.strip())
-                    logger.info(f"Faulty module dumped safely to Staging Area: {debug_dump_dest}")
+                    try:
+                        os.makedirs(os.path.dirname(debug_dump_dest), exist_ok=True)
+                        with open(debug_dump_dest, "w", encoding="utf-8") as f:
+                            f.write(generated_python_code.strip())
+                        logger.info(f"Faulty module dumped safely to Staging Area: {debug_dump_dest}")
+                    except OSError:
+                        logger.warning(f"Failed to dump faulty code to {debug_dump_dest}")
 
                     if current_attempt == max_attempts:
                         logger.error(f"All self-correction limits exhausted for {domain}. Abandoned build.")
@@ -236,4 +244,9 @@ async def run_llm_debugging_agent(domain: str, broken_code: str, error_traceback
             {"role": "user", "content": user_prompt},
         ]
     )
-    return response.choices[0].message.content or ""
+    code = response.choices[0].message.content or ""
+    if code.startswith("```"):
+        first = code.index("\n") + 1
+        last = code.rindex("```")
+        code = code[first:last]
+    return code.strip()
