@@ -33,14 +33,15 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36)"
 }
 
-USD_TO_INR = 83
-
 
 async def extract_product_data(query: str, domain: str) -> dict | None:
     logger.info(f"Running generic fallback parser on {domain} for {query}")
     try:
+        # Normalize domain: strip protocol and path
+        clean_domain = domain.replace("https://", "").replace("http://", "").split("/")[0].strip()
+
         async with httpx.AsyncClient() as client:
-            response = await client.get(domain, headers=HEADERS, timeout=5.0)
+            response = await client.get(f"https://{clean_domain}", headers=HEADERS, timeout=5.0)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, "lxml")
 
