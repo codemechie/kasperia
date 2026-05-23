@@ -4,7 +4,6 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-import httpx
 from bs4 import BeautifulSoup
 from fastmcp import FastMCP
 from urllib.parse import quote
@@ -12,6 +11,7 @@ from urllib.parse import quote
 from scrapers import get_scraper, all_scrapers
 from state import state
 from worker import start_background_worker
+from utils.fetch import fetch_page
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("KasperiaServer")
@@ -63,29 +63,25 @@ async def extract_product_data(query: str, domain: str) -> dict | None:
         clean_domain = domain.replace("https://", "").replace("http://", "").split("/")[0].strip()
         encoded_query = quote(query, safe="")
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            urls_to_try = [
-                f"https://{clean_domain}{pattern.replace('{query}', encoded_query)}"
-                for pattern in SEARCH_PATTERNS
-            ]
-            urls_to_try.append(f"https://{clean_domain}/")
+        urls_to_try = [
+            f"https://{clean_domain}{pattern.replace('{query}', encoded_query)}"
+            for pattern in SEARCH_PATTERNS
+        ]
+        urls_to_try.append(f"https://{clean_domain}/")
 
-            response = None
-            for url in urls_to_try:
-                try:
-                    resp = await client.get(url, headers=HEADERS, timeout=5.0)
-                    if resp.is_success:
-                        response = resp
-                        logger.info(f"Fallback parser got successful response from {url}")
-                        break
-                except Exception:
-                    continue
+        response = None
+        for url in urls_to_try:
+            resp = await fetch_page(url, headers=HEADERS, follow_redirects=True, timeout=5.0)
+            if resp is not None:
+                response = resp
+                logger.info(f"Fallback parser got successful response from {url}")
+                break
 
-            if response is None:
-                logger.warning(f"Fallback parser could not fetch any page for {clean_domain}")
-                return None
+        if response is None:
+            logger.warning(f"Fallback parser could not fetch any page for {clean_domain}")
+            return None
 
-            soup = BeautifulSoup(response.content, "lxml")
+        soup = BeautifulSoup(response.content, "lxml")
 
         for script in soup.find_all("script", type="application/ld+json"):
             if not script.string:

@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import httpx
 from bs4 import BeautifulSoup
 from openai import AsyncOpenAI
 import re
@@ -9,6 +8,7 @@ from urllib.parse import quote
 
 from state import state
 from scrapers.evaluator import load_agent_scraper
+from utils.fetch import fetch_page
 
 #a strict allowlist or hostname regex to reject
 #values containing schemes, paths, ports or dangerous characters to prevent SSRF:
@@ -70,29 +70,22 @@ async def fetch_target_dom_sample(domain: str, query: str) -> str:
         return ""
 
     encoded_query = quote(query or "", safe="")
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        # Phase 1: try search URL patterns
-        for pattern in _SEARCH_PATTERNS:
-            url = f"https://{domain}{pattern.replace('{query}', encoded_query)}"
-            try:
-                response = await client.get(url, headers=_HEADERS)
-                if response.is_success:
-                    cleaned = _clean_dom(response.content)
-                    if len(cleaned) >= 200:
-                        return cleaned
-            except Exception:
-                continue
+    # Phase 1: try search URL patterns
+    for pattern in _SEARCH_PATTERNS:
+        url = f"https://{domain}{pattern.replace('{query}', encoded_query)}"
+        response = await fetch_page(url, headers=_HEADERS, follow_redirects=True, timeout=10.0)
+        if response is not None:
+            cleaned = _clean_dom(response.content)
+            if len(cleaned) >= 200:
+                return cleaned
 
-        # Phase 2: fallback to homepage for structural context
-        try:
-            response = await client.get(f"https://{domain}/", headers=_HEADERS)
-            if response.is_success:
-                cleaned = _clean_dom(response.content)
-                if len(cleaned) >= 200:
-                    logger.info(f"Falling back to homepage for {domain}")
-                    return cleaned
-        except Exception:
-            pass
+    # Phase 2: fallback to homepage for structural context
+    response = await fetch_page(f"https://{domain}/", headers=_HEADERS, follow_redirects=True, timeout=10.0)
+    if response is not None:
+        cleaned = _clean_dom(response.content)
+        if len(cleaned) >= 200:
+            logger.info(f"Falling back to homepage for {domain}")
+            return cleaned
 
     logger.warning(f"Could not fetch any usable DOM content for {domain}")
     return ""
