@@ -71,23 +71,21 @@ async def fetch_target_dom_sample(domain: str, query: str) -> str:
 
     encoded_query = quote(query or "", safe="")
     # Phase 1: try search URL patterns
-    for prefix in ["", "www."]:
-        for pattern in _SEARCH_PATTERNS:
-            url = f"https://{prefix}{domain}{pattern.replace('{query}', encoded_query)}"
-            response = await fetch_page(url, headers=_HEADERS, follow_redirects=True, timeout=10.0, domain_for_cookies=domain)
-            if response is not None:
-                cleaned = _clean_dom(response.content)
-                if len(cleaned) >= 200:
-                    return cleaned
-
-    # Phase 2: fallback to homepage for structural context
-    for prefix in ["", "www."]:
-        response = await fetch_page(f"https://{prefix}{domain}/", headers=_HEADERS, follow_redirects=True, timeout=10.0, domain_for_cookies=domain)
+    for pattern in _SEARCH_PATTERNS:
+        url = f"https://{domain}{pattern.replace('{query}', encoded_query)}"
+        response = await fetch_page(url, headers=_HEADERS, follow_redirects=True, timeout=10.0)
         if response is not None:
             cleaned = _clean_dom(response.content)
             if len(cleaned) >= 200:
-                logger.info(f"Falling back to homepage for {domain}")
                 return cleaned
+
+    # Phase 2: fallback to homepage for structural context
+    response = await fetch_page(f"https://{domain}/", headers=_HEADERS, follow_redirects=True, timeout=10.0)
+    if response is not None:
+        cleaned = _clean_dom(response.content)
+        if len(cleaned) >= 200:
+            logger.info(f"Falling back to homepage for {domain}")
+            return cleaned
 
     logger.warning(f"Could not fetch any usable DOM content for {domain}")
     return ""

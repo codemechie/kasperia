@@ -63,15 +63,15 @@ async def extract_product_data(query: str, domain: str) -> dict | None:
         clean_domain = domain.replace("https://", "").replace("http://", "").split("/")[0].strip()
         encoded_query = quote(query, safe="")
 
-        urls_to_try = []
-        for prefix in ["", "www."]:
-            for pattern in SEARCH_PATTERNS:
-                urls_to_try.append(f"https://{prefix}{clean_domain}{pattern.replace('{query}', encoded_query)}")
-            urls_to_try.append(f"https://{prefix}{clean_domain}/")
+        urls_to_try = [
+            f"https://{clean_domain}{pattern.replace('{query}', encoded_query)}"
+            for pattern in SEARCH_PATTERNS
+        ]
+        urls_to_try.append(f"https://{clean_domain}/")
 
         response = None
         for url in urls_to_try:
-            resp = await fetch_page(url, headers=HEADERS, follow_redirects=True, timeout=5.0, domain_for_cookies=clean_domain)
+            resp = await fetch_page(url, headers=HEADERS, follow_redirects=True, timeout=5.0)
             if resp is not None:
                 response = resp
                 logger.info(f"Fallback parser got successful response from {url}")
