@@ -3,6 +3,8 @@ from bs4 import BeautifulSoup
 from httpx import AsyncClient
 
 class Scraper:
+    target_domain = "books.toscrape.com"
+
     def __init__(self):
         self.base_url = "http://books.toscrape.com/catalogue/"
     

@@ -14,9 +14,13 @@ generated_dir = pathlib.Path(__file__).parent / "generated"
 for py_file in sorted(generated_dir.glob("*.py")):
     if py_file.name == "__init__.py":
         continue
-    mod = importlib.import_module(f".generated.{py_file.stem}", __package__)
-    scraper = mod.Scraper()
-    state.scraper_registry[scraper.target_domain] = scraper
+    try:
+        mod = importlib.import_module(f".generated.{py_file.stem}", __package__)
+        scraper = mod.Scraper()
+        domain = scraper.target_domain if hasattr(scraper, "target_domain") else py_file.stem.replace("_", ".")
+        state.scraper_registry[domain] = scraper
+    except Exception:
+        continue
 
 def get_scraper(domain: str):
     return state.scraper_registry.get(domain)
