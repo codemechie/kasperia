@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import httpx
 from bs4 import BeautifulSoup
 from fastmcp import FastMCP
+from urllib.parse import quote
 
 from scrapers import get_scraper, all_scrapers
 from state import state
@@ -31,8 +32,28 @@ async def app_lifespan(server: FastMCP):
 mcp = FastMCP("Kasperia Deal Agent", lifespan=app_lifespan)
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36)"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+    "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
 }
+
+
+SEARCH_PATTERNS = [
+    "/search?q={query}",
+    "/p/pl?d={query}",
+    "/pl?d={query}",
+    "/s?q={query}",
+    "/search?keyword={query}",
+]
 
 
 async def extract_product_data(query: str, domain: str) -> dict | None:
@@ -40,10 +61,30 @@ async def extract_product_data(query: str, domain: str) -> dict | None:
     try:
         # Normalize domain: strip protocol and path
         clean_domain = domain.replace("https://", "").replace("http://", "").split("/")[0].strip()
+        encoded_query = quote(query, safe="")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"https://{clean_domain}", headers=HEADERS, timeout=5.0)
-            response.raise_for_status()
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            urls_to_try = [
+                f"https://{clean_domain}{pattern.replace('{query}', encoded_query)}"
+                for pattern in SEARCH_PATTERNS
+            ]
+            urls_to_try.append(f"https://{clean_domain}/")
+
+            response = None
+            for url in urls_to_try:
+                try:
+                    resp = await client.get(url, headers=HEADERS, timeout=5.0)
+                    if resp.is_success:
+                        response = resp
+                        logger.info(f"Fallback parser got successful response from {url}")
+                        break
+                except Exception:
+                    continue
+
+            if response is None:
+                logger.warning(f"Fallback parser could not fetch any page for {clean_domain}")
+                return None
+
             soup = BeautifulSoup(response.content, "lxml")
 
         for script in soup.find_all("script", type="application/ld+json"):

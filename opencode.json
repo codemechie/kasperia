@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "kasperia-engine": {
+      "type": "remote",
+      "url": "http://100.113.197.26",
+      "enabled": true,
+      "timeout": 30000
+    }
+  }
+}
