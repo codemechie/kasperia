@@ -30,9 +30,13 @@ logger = logging.getLogger("BackgroundWorker")
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "ollama")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r1:8b")
+
 llm_client = AsyncOpenAI(
-    base_url="http://127.0.0.1:11435/v1",
-    api_key="ollama",
+    base_url=OLLAMA_BASE_URL,
+    api_key=OLLAMA_API_KEY,
 )
 
 def _clean_dom(html: bytes) -> str:
@@ -197,7 +201,7 @@ Requirements:
 Return ONLY raw Python code, no markdown fences, no explanation."""
 
     response = await llm_client.chat.completions.create(
-        model="qwen2.5:7b",
+        model=LLM_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -238,7 +242,7 @@ async def run_llm_debugging_agent(domain: str, broken_code: str, error_traceback
     
     Return ONLY raw fixed code, no markdown fences, no explanation."""
     response = await llm_client.chat.completions.create(
-        model="qwen2.5:7b",
+        model=LLM_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},

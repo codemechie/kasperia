@@ -1,13 +1,18 @@
 import asyncio
 import json
+import os
 import re
 
 from openai import OpenAI
 from server import search_products
-#Connect to Ollama (default port 1143)
+
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "ollama")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r1:8b")
+
 client = OpenAI(
-    base_url="http://127.0.0.1:11435/v1",
-    api_key="ollama"
+    base_url=OLLAMA_BASE_URL,
+    api_key=OLLAMA_API_KEY,
 )
 tools = [
     {
@@ -31,7 +36,7 @@ user_prompt = "Show me best running shoes from nike"
 print(f"User prompt: {user_prompt}\n")
 
 response = client.chat.completions.create(
-    model="qwen2.5:7b",
+    model=LLM_MODEL,
     messages=[{"role": "user", "content": user_prompt}],  # type: ignore[arg-type]
     tools=tools, # type: ignore[arg-type]
     tool_choice="auto"
@@ -57,7 +62,7 @@ if args is None and response_message.content:
     args = _parse_tool_call(response_message.content)
 
 if args:
-    print(f"Qwen decided to call tool with args: {args}")
+    print(f"LLM decided to call tool with args: {args}")
 
     query = args.get("query")
     domain = args.get("domain")

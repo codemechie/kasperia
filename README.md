@@ -4,7 +4,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-Server-green.svg)](https://github.com/jlouis/fastmcp)
-[![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-orange.svg)](https://ollama.ai)
+[![Ollama](https://img.shields.io/badge/Ollama-DeepSeek%20R1%208B-orange.svg)](https://ollama.ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -16,7 +16,7 @@ Kasperia is a **self-healing e-commerce search agent** that:
 - 🤖 **Understands natural language** queries to determine which stores to search
 - 🔍 **Auto-generates store-specific scrapers** on demand using LLM code generation
 - ⚡ **Returns instant results** via fallback parsing while learning new sites
-- 🔒 **Runs locally** with Ollama (Qwen 2.5)—no cloud APIs, no API keys
+- 🔒 **Runs locally** with Ollama (DeepSeek R1 8B)—no cloud APIs, no API keys
 - 🛡️ **Isolates generated code** in sandboxed execution environments for safety
 
 Ask Kasperia: *"Find me running shoes under $100 on Nike and Amazon"*, and it will:
@@ -108,17 +108,19 @@ One LLM handles user intent and routing; another specializes in code generation.
 ```
 kasperia/
 ├── main.py                  # Entrypoint, graceful lifecycle & lifespan hooks
-├── server.py                # FastMCP server, search_products tool, fallback parser
+├── server.py                # FastMCP server (SSE transport), search_products tool
 ├── agent.py                 # Orchestrator LLM client (user-facing)
 ├── worker.py                # Background worker (DOM fetch → code-gen → validate → deploy)
-���── state.py                 # In-memory AppState (scraper_registry, cache, queue, locks)
+├── state.py                 # In-memory AppState (scraper_registry, cache, queue, locks)
 ├── scrapers/
 │   ├── base.py              # BaseScraper abstract base class
 │   ├── evaluator.py         # Isolated code compiler & validator (sandboxed execution)
 │   ├── schema.py            # Pydantic ProductDeal model
 │   ├── nike.py              # Nike scraper (legacy)
 │   ├── adidas.py            # Adidas scraper (legacy)
-│   └── __init__.py          # Legacy SCRAPERS registry
+│   ├── __init__.py          # Scraper registry bootstrap
+│   ├── generated/           # LLM-generated scrapers (persisted via Docker volume)
+│   └── debug_dump/          # Faulty scraper staging area
 └── README.md                # This file
 ```
 
@@ -129,9 +131,9 @@ kasperia/
 ### Prerequisites
 
 - **Python 3.12+**
-- **Ollama** running locally with Qwen 2.5 model
+- **Ollama** running locally with DeepSeek R1 8B model
   ```bash
-  ollama pull qwen:2.5
+  ollama pull deepseek-r1:8b
   ollama serve
   ```
 
@@ -149,7 +151,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The FastMCP server starts on a local port (default: see logs). The background worker thread initializes automatically via the lifespan hook.
+The FastMCP server starts on `http://0.0.0.0:8000` (SSE transport) by default. Configure via `MCP_HOST` and `MCP_PORT` env vars. The background worker thread initializes automatically via the lifespan hook.
 
 ### Example Query
 
@@ -191,7 +193,7 @@ Response:
          │
          ▼
 ┌──────────────────────────────────┐
-│  Orchestrator Agent (Qwen)       │
+│  Orchestrator Agent (LLM)        │
 │  • Parse intent                  │
 │  • Identify store(s)             │
 │  • Call search_products()        │
@@ -216,8 +218,8 @@ Response:
          │                │
          │                ▼
          │          ┌────────────────────────┐
-         │          │  Code-Gen Worker       │
-         │          │ (Background Qwen)      │
+          │          │  Code-Gen Worker       │
+          │          │ (Background LLM)       │
          │          ├────────────────────────┤
          │          │ 1. Fetch DOM sample    │
          │          │ 2. LLM → Python class  │
@@ -275,11 +277,10 @@ MIT License — See [LICENSE](LICENSE) for details.
 
 ## 🎯 Roadmap
 
-- [ ] Multi-model support (expand beyond Qwen 2.5)
-- [ ] Persistent scraper storage
+- [x] Multi-model support (DeepSeek R1 8B, configurable via env)
+- [ ] Persistent scraper storage (SQLite/Redis)
 - [ ] Price history tracking & deal alerts
 - [ ] Web dashboard
-- [ ] Docker containerization
 - [ ] Advanced filtering (brand, rating, shipping cost)
 
 ---

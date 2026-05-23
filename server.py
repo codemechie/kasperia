@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import httpx
@@ -123,6 +124,7 @@ async def search_products(query: str, domain: str) -> dict:
             }
         except Exception as e:
             logger.error(f"Static scraper failed for {domain_clean}: {str(e)}")
+
     #Layer 3: Miss, Dispatch Dynamic Agent Worker and Run Fallback Parser Concurrently
     logger.info(f"No static scraper found for {domain_clean}. Dispatching background build task...")
     #Instaneous, non-blocking push to the shared container
@@ -148,4 +150,6 @@ async def search_products(query: str, domain: str) -> dict:
     }
 
 if __name__ == "__main__":
-    mcp.run()
+    host = os.getenv("MCP_HOST", "0.0.0.0")
+    port = int(os.getenv("MCP_PORT", "8000"))
+    mcp.run(transport="sse", host=host, port=port)
