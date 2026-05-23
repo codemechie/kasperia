@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from bs4 import BeautifulSoup
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from scrapers import get_scraper, all_scrapers
 from state import state
