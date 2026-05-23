@@ -27,7 +27,7 @@ async def fetch_page(
                 resp = await session.get(
                     url,
                     headers=headers or {},
-                    follow_redirects=follow_redirects,
+                    allow_redirects=follow_redirects,
                     timeout=timeout,
                 )
                 if resp.ok:
