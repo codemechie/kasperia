@@ -153,12 +153,14 @@ async def search_products(query: str, domain: str) -> dict:
 
         try:
             raw_data = await scraper.scrape_products(query)
-            state.cache[cache_key] = raw_data
-            return {
-                "status": "success",
-                "source": "static_scraper",
-                "data": raw_data
-            }
+            if raw_data:
+                state.cache[cache_key] = raw_data
+                return {
+                    "status": "success",
+                    "source": "static_scraper",
+                    "data": raw_data,
+                }
+            logger.warning(f"Static scraper for {domain_clean} returned empty. Triggering rebuild...")
         except Exception as e:
             logger.error(f"Static scraper failed for {domain_clean}: {str(e)}")
 
