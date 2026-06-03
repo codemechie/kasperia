@@ -3,11 +3,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
+from dataclasses import replace as dc_replace
+
 from contracts.models import (
     AgentInput,
     AgentOutput,
     AgentStatus,
     AgentMetadata,
+    TelemetryPayload,
     ToolName,
     RecoveryStrategy,
 )
@@ -100,10 +103,17 @@ class ToolOrchestrator:
                     )
 
                 # Mark each payload with the orchestrator market context
-                for p in telemetry:
-                    signals = dict(p.contextual_signals)
-                    signals["_market"] = agent_input.market
-                    signals["_query"] = agent_input.query
+                telemetry = [
+                    dc_replace(
+                        p,
+                        contextual_signals={
+                            **p.contextual_signals,
+                            "_market": agent_input.market,
+                            "_query": agent_input.query,
+                        },
+                    )
+                    for p in telemetry
+                ]
 
                 status = (
                     AgentStatus.SUCCESS

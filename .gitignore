@@ -3,3 +3,5 @@ __pycache__/
 context.txt
 concepts.md
 scrapers/debug_dump/
+q&a.md
+prompt_readme.md
